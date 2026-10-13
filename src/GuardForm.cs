@@ -64,6 +64,7 @@ public class GuardForm:Form {
   allowButton=new Button{Text="允许监控",Location=new Point(532,29),Size=new Size(116,36),Anchor=AnchorStyles.Top|AnchorStyles.Right,Visible=false};card.Controls.Add(allowButton);allowButton.Click+=(a,b)=>Upgrade();
   var footer=new Panel{Dock=DockStyle.Bottom,Height=40};page.Controls.Add(footer);
   bindingHelp=new Label{Text="正在自动识别本机游戏…",Dock=DockStyle.Fill,TextAlign=ContentAlignment.BottomLeft,ForeColor=Color.FromArgb(104,114,125)};footer.Controls.Add(bindingHelp);
+  var uninstall=new Button{Text="卸载",Width=60,Dock=DockStyle.Right,FlatStyle=FlatStyle.Flat,ForeColor=Color.DimGray,Font=new Font(Font.FontFamily,9)};uninstall.FlatAppearance.BorderSize=0;footer.Controls.Add(uninstall);uninstall.Click+=(a,b)=>Uninstall();
   var listPanel=new Panel{Dock=DockStyle.Fill,Padding=new Padding(0,18,0,0)};page.Controls.Add(listPanel);listPanel.BringToFront();
   var listHeader=new Panel{Dock=DockStyle.Top,Height=38};listPanel.Controls.Add(listHeader);
   listHeader.Controls.Add(new Label{Text="已添加的游戏",AutoSize=true,Location=new Point(0,6),Font=new Font(Font,FontStyle.Bold)});
@@ -84,15 +85,19 @@ public class GuardForm:Form {
   machine.Changed+=(kind,session)=>{var detail=new{session=session==null?null:session.Id,games=session==null?new string[0]:session.Games.Select(g=>g.Name).ToArray(),processes=session==null?new string[0]:session.Games.SelectMany(g=>g.ProcessKeys).ToArray(),seen=session==null?new string[0]:session.Seen.ToArray()};Store.Log(kind,detail);AddHistory(DateTime.Now.ToString("HH:mm:ss")+" "+kind+" "+string.Join(", ",detail.games));};
   machine.ProcessChanged+=(kind,game)=>Store.Log(kind,new{game=game.Name,processes=game.ProcessKeys});
   var menu=new ContextMenuStrip();menu.Items.Add("打开",null,(a,b)=>ShowWindow());menu.Items.Add("设置",null,(a,b)=>OpenSettings());menu.Items.Add("暂停雷神时长…",null,(a,b)=>ManualPause());menu.Items.Add(new ToolStripSeparator());menu.Items.Add("退出",null,(a,b)=>ExitGuard());tray=new NotifyIcon{Icon=SystemIcons.Shield,Text="雷神自动暂停助手",Visible=true,ContextMenuStrip=menu};tray.DoubleClick+=(a,b)=>ShowWindow();
-  RebuildGames();Shown+=(a,b)=>{if(background)HideToTray();else Activate();RefreshStartup();};FormClosing+=(a,b)=>{if(!exiting){b.Cancel=true;HideToTray();}};timer.Tick+=(a,b)=>Poll();timer.Start();Store.Log("monitor_started",new{admin=Store.IsAdmin,delay=machine.Delay,version="2.3"});ResumeLayout(true);
+  RebuildGames();Shown+=(a,b)=>{if(background)HideToTray();else{ShowWindow();settings.MainWindowShown=true;Store.Write(Store.Config,settings);}RefreshStartup();};FormClosing+=(a,b)=>{if(!exiting){if(b.CloseReason!=CloseReason.UserClosing){PrepareExit();return;}b.Cancel=true;CloseToTray(true);}};timer.Tick+=(a,b)=>Poll();timer.Start();Store.Log("monitor_started",new{admin=Store.IsAdmin,delay=machine.Delay,version="2.4"});ResumeLayout(true);
  }
  void AddButton(Control parent,string text,int x,int y,int w,Action action) {var b=new Button{Text=text,Location=new Point(x,y),Size=new Size(w,38)};b.Click+=(a,e)=>{try{action();}catch(Exception ex){MessageBox.Show(this,ex.Message,"雷神自动暂停助手",MessageBoxButtons.OK,MessageBoxIcon.Warning);}};parent.Controls.Add(b);}
+ void Uninstall(){if(actionBusy){MessageBox.Show(this,"请等待当前暂停操作完成后再卸载。","卸载助手");return;}if(MessageBox.Show(this,"将移除开机启动，删除助手程序及本地设置和记录，并关闭助手。\n\n是否继续卸载？","卸载雷神自动暂停助手",MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)!=DialogResult.Yes)return;try{using(var child=UninstallAction.Start()){ExitGuard();}}catch(System.ComponentModel.Win32Exception e){if(e.NativeErrorCode!=1223)MessageBox.Show(this,e.Message,"未能卸载");}catch(Exception e){MessageBox.Show(this,e.Message,"未能卸载");}}
  void AddHistory(string text){history.Items.Insert(0,text);if(history.Items.Count>180)history.Items.RemoveAt(history.Items.Count-1);}
  void RefreshStartup(){syncStartup=true;try{settingsDialog.Startup.Checked=Startup.Enabled();}finally{syncStartup=false;}}
  void ShowWindow(){Show();WindowState=FormWindowState.Normal;ShowInTaskbar=true;Native.ShowWindow(Handle,9);Activate();RefreshStartup();}
  void HideToTray(){Hide();ShowInTaskbar=false;}
- void ExitGuard(){CancelRequest();exiting=true;timer.Stop();if(prompt!=null){prompt.Approved=false;prompt.Close();}tray.Visible=false;tray.Dispose();Close();}
- void Upgrade(){var child=Store.Elevate("--takeover --background");if(child!=null)ExitGuard();}
+ protected virtual void ShowTrayNotice(){MessageBox.Show(this,"关闭窗口后，助手会继续在托盘监控游戏。\n\n双击任务栏右下角的助手图标，可以重新打开主窗口。\n要完全关闭程序，请右键托盘图标并选择“退出”。","助手将继续在后台运行",MessageBoxButtons.OK,MessageBoxIcon.Information);}
+ protected void CloseToTray(bool userClosing){if(userClosing&&!settings.TrayNoticeShown){ShowTrayNotice();settings.TrayNoticeShown=true;Store.Write(Store.Config,settings);}HideToTray();}
+ void PrepareExit(){CancelRequest();exiting=true;timer.Stop();if(prompt!=null){prompt.Approved=false;prompt.Close();}tray.Visible=false;tray.Dispose();}
+ void ExitGuard(){PrepareExit();Close();}
+ void Upgrade(){var child=Store.Elevate("--takeover",true);if(child!=null)ExitGuard();}
  void AdminCommand(string args,bool exit){var child=Store.Elevate(args);if(child!=null&&exit)ExitGuard();}
  void LaunchClient(){if(!File.Exists(settings.ClientPath))throw new Exception("请在设置中选择雷神启动程序");Process.Start(new ProcessStartInfo(settings.ClientPath){UseShellExecute=true});nextScan=0;}
  void CancelRequest(){if(requestPath!=null){try{File.WriteAllText(requestPath+".cancel","cancelled");}catch{}}}
@@ -163,7 +168,7 @@ public class GuardForm:Form {
   finally {actionBusy=false;nextScan=0;}
  }
  void OpenSettings(){RefreshStartup();settingsDialog.ShowDialog(this);SaveSettings();}
- void ShowDiagnostics(){using(var form=new Form{Text="诊断信息",Size=new Size(660,420),StartPosition=FormStartPosition.CenterParent,Font=Font}){var text=new TextBox{Dock=DockStyle.Fill,Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Both,Text="版本：2.3\r\n"+"当前状态："+machine.Status+"\r\n"+"本地记录："+Store.LogPath+"\r\n\r\n"+string.Join("\r\n",history.Items.Cast<string>())};form.Controls.Add(text);form.ShowDialog(this);}}
+ void ShowDiagnostics(){using(var form=new Form{Text="诊断信息",Size=new Size(660,420),StartPosition=FormStartPosition.CenterParent,Font=Font}){var text=new TextBox{Dock=DockStyle.Fill,Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Both,Text="版本：2.4\r\n"+"当前状态："+machine.Status+"\r\n"+"本地记录："+Store.LogPath+"\r\n\r\n"+string.Join("\r\n",history.Items.Cast<string>())};form.Controls.Add(text);form.ShowDialog(this);}}
  void SelectGame(){using(var picker=new SteamLibraryPicker(settings)){if(picker.ShowDialog(this)!=DialogResult.OK)return;AddSelectedGame(picker.SelectedGame,picker.SelectedExecutable,picker.SelectedName,picker.AddedLibraries);}}
  void AddSelectedGame(GameBinding steam,string file,string title,IEnumerable<string> libraries){
   GameBinding candidate;
@@ -205,3 +210,10 @@ public class GuardForm:Form {
  }
 }
 }
+
+
+
+
+
+
+

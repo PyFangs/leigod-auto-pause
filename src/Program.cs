@@ -22,7 +22,7 @@ public static class Store {
  public static bool IsAdmin {get{return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);}}
  public static void Write(string path,object value) {lock(Gate){Directory.CreateDirectory(Path.GetDirectoryName(path));File.WriteAllText(path,Json.Serialize(value),System.Text.Encoding.UTF8);}}
  public static T Read<T>(string path) {lock(Gate){return Json.Deserialize<T>(File.ReadAllText(path,System.Text.Encoding.UTF8));}}
- public static Settings Load() {Directory.CreateDirectory(Folder);if(!File.Exists(Config)){var s=new Settings();Write(Config,s);return s;}var loaded=Read<Settings>(Config);loaded.Validate();if(!Read<Dictionary<string,object>>(Config).ContainsKey("FirstRunSetupCompleted")){loaded.FirstRunSetupCompleted=true;Write(Config,loaded);}return loaded;}
+ public static Settings Load() {Directory.CreateDirectory(Folder);if(!File.Exists(Config)){var s=new Settings();Write(Config,s);return s;}var loaded=Read<Settings>(Config);loaded.Validate();if(!Read<Dictionary<string,object>>(Config).ContainsKey("FirstRunSetupCompleted")){loaded.FirstRunSetupCompleted=true;loaded.MainWindowShown=true;Write(Config,loaded);}return loaded;}
  public static void Log(string kind,object details) {lock(Gate){Directory.CreateDirectory(Folder);if(File.Exists(LogPath)&&new FileInfo(LogPath).Length>2*1024*1024){File.Copy(LogPath,LogPath+".previous",true);File.WriteAllText(LogPath,"");}File.AppendAllText(LogPath,Json.Serialize(new{time=DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss zzz"),kind=kind,details=details})+Environment.NewLine,System.Text.Encoding.UTF8);}}
  public static HashSet<string> Processes(IEnumerable<GameBinding> bindings=null) {var games=(bindings??new GameBinding[0]).Where(g=>g.Enabled&&g.UsesPath).ToArray();var names=new HashSet<string>(StringComparer.OrdinalIgnoreCase);foreach(var p in Process.GetProcesses()){using(p){try{string name=Settings.ProcessName(p.ProcessName);names.Add(name);if(games.Length==0||Discovery.Auxiliary(name))continue;var path=Native.ProcessPath((uint)p.Id);if(path==null)continue;bool window=p.MainWindowHandle!=IntPtr.Zero;foreach(var game in games)if(game.MatchesExecutable(path,window))names.Add(game.ProcessKeys[0]);}catch{}}}return names;}
  public static string Fingerprint(Frame f,Settings s) {
@@ -30,7 +30,8 @@ public static class Store {
   var unknown=f.ActiveRows.Where(r=>!gs.Any(g=>Client.Matches(r,g))).ToArray();
   return string.Join("|",gs.Select(g=>g.Name+":"+string.Join(",",g.ProcessKeys)).OrderBy(x=>x))+"#"+string.Join("|",unknown);
  }
- public static Process Elevate(string arguments) {return Process.Start(new ProcessStartInfo(Exe,arguments){UseShellExecute=true,Verb="runas",WindowStyle=ProcessWindowStyle.Hidden});}
+ public static ProcessStartInfo ElevationStartInfo(string arguments,bool showWindow=false){return new ProcessStartInfo(Exe,arguments){UseShellExecute=true,Verb="runas",WindowStyle=showWindow?ProcessWindowStyle.Normal:ProcessWindowStyle.Hidden};}
+ public static Process Elevate(string arguments,bool showWindow=false) {return Process.Start(ElevationStartInfo(arguments,showWindow));}
  public static string Quote(string s) {if(s.Contains("\""))throw new Exception("路径中不能包含双引号");return "\""+s+"\"";}
 }
 public class PauseRequest {
@@ -84,10 +85,12 @@ public static class Startup {
   if(restart){Program.SignalQuit();Thread.Sleep(1800);task.Run(null);}
  }
  public static bool Enabled() {try{dynamic service=Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service"));service.Connect();dynamic task=service.GetFolder("\\").GetTask(TaskName);return (bool)task.Enabled;}catch{return false;}}
- public static void Remove() {
+ public static void Remove(){RemoveFor(Store.Exe);Store.Log("startup_disabled",null);}
+ public static void RemoveFor(string executable) {
   dynamic service=Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service"));service.Connect();dynamic folder=service.GetFolder("\\");
-  dynamic task=folder.GetTask(TaskName);if(!string.Equals((string)task.Definition.Actions.Item(1).Path,Store.Exe,StringComparison.OrdinalIgnoreCase))throw new Exception("启动任务指向其他程序，未移除");
-  folder.DeleteTask(TaskName,0);Store.Log("startup_disabled",null);
+  dynamic task;try{task=folder.GetTask(TaskName);}catch(FileNotFoundException){return;}catch(System.Runtime.InteropServices.COMException e){if((uint)e.ErrorCode==0x80070002)return;throw;}
+  if(!UninstallAction.SamePath((string)task.Definition.Actions.Item(1).Path,executable))throw new Exception("启动任务指向其他程序，未移除");
+  folder.DeleteTask(TaskName,0);
  }
 }
 public static class Program {
@@ -97,6 +100,7 @@ public static class Program {
   try {Native.SetProcessDpiAwareness(2);}catch{}
   Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
   try {
+   if(args.Length==2&&args[0]=="--uninstall-worker"){UninstallAction.Run(Path.GetFullPath(args[1]));return;}
    if(args.Contains("--quit")){SignalQuit();return;}
    if(args.Contains("--restore-client")){using(var signal=EventWaitHandle.OpenExisting("Local\\LeigodGuard-Restore-"+Store.Sid))signal.Set();return;}
    if(args.Length>0&&args[0]=="--pause-once") {
@@ -107,21 +111,30 @@ public static class Program {
    if(args.Contains("--install-startup")){if(!Store.IsAdmin){Store.Elevate("--install-startup");return;}Startup.Install();return;}
    if(args.Contains("--remove-startup")){if(!Store.IsAdmin){Store.Elevate("--remove-startup");return;}Startup.Remove();return;}
    if(args.Contains("--diagnose")){var f=Client.Scan().GetAwaiter().GetResult();Store.Write(Path.Combine(Store.Folder,"diagnostic.json"),new{f.Window,f.Width,f.Height,f.Active,f.ActiveRows,pause=f.PauseButton!=null,resume=f.ResumeButton!=null,f.Minimized,f.Error,admin=Store.IsAdmin});return;}
-   Settings settings=Store.Load();if(!File.Exists(settings.ClientPath)){var client=Discovery.DetectClientPath();if(!string.IsNullOrEmpty(client)){settings.ClientPath=client;Store.Write(Store.Config,settings);}}if(args.Contains("--launch-client")){if(File.Exists(settings.ClientPath))Process.Start(new ProcessStartInfo(settings.ClientPath){UseShellExecute=true});else MessageBox.Show("请先在设置中选择雷神启动程序。","雷神自动暂停助手");}
+   Settings settings=Store.Load();bool background=FirstRunSetup.StartInBackground(settings,args.Contains("--background"),args.Contains("--first-run-setup"));if(!File.Exists(settings.ClientPath)){var client=Discovery.DetectClientPath();if(!string.IsNullOrEmpty(client)){settings.ClientPath=client;Store.Write(Store.Config,settings);}}if(args.Contains("--launch-client")){if(File.Exists(settings.ClientPath))Process.Start(new ProcessStartInfo(settings.ClientPath){UseShellExecute=true});else MessageBox.Show("请先在设置中选择雷神启动程序。","雷神自动暂停助手");}
    if(args.Contains("--takeover")){SignalQuit();Thread.Sleep(1800);}
    var mutexSecurity=new MutexSecurity();mutexSecurity.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(Store.Sid),MutexRights.FullControl,AccessControlType.Allow));
    bool created;using(var mutex=new Mutex(false,"Local\\LeigodGuard-"+Store.Sid,out created,mutexSecurity)) {
     bool acquired=false;try{acquired=mutex.WaitOne(0);}catch(AbandonedMutexException){acquired=true;}
-    if(!acquired){if(!args.Contains("--background")){try{using(var e=EventWaitHandle.OpenExisting("Local\\LeigodGuard-Show-"+Store.Sid))e.Set();}catch(Exception e){Store.Log("ipc_show_failed",new{error=e.Message});}}return;}
+    if(!acquired){if(!background){try{using(var e=EventWaitHandle.OpenExisting("Local\\LeigodGuard-Show-"+Store.Sid))e.Set();}catch(Exception e){Store.Log("ipc_show_failed",new{error=e.Message});}}return;}
     var eventSecurity=new EventWaitHandleSecurity();eventSecurity.AddAccessRule(new EventWaitHandleAccessRule(new SecurityIdentifier(Store.Sid),EventWaitHandleRights.FullControl,AccessControlType.Allow));
     QuitSignal=new EventWaitHandle(false,EventResetMode.AutoReset,"Local\\LeigodGuard-Quit-"+Store.Sid,out created,eventSecurity);
     ShowSignal=new EventWaitHandle(false,EventResetMode.AutoReset,"Local\\LeigodGuard-Show-"+Store.Sid,out created,eventSecurity);
     RestoreSignal=new EventWaitHandle(false,EventResetMode.AutoReset,"Local\\LeigodGuard-Restore-"+Store.Sid,out created,eventSecurity);
-    if(FirstRunSetup.Run(settings,args.Contains("--first-run-setup"),Store.IsAdmin,args.Contains("--background"),s=>Store.Write(Store.Config,s),arguments=>{using(var child=Store.Elevate(arguments)){return child!=null;}},()=>Startup.Install(false),(kind,message)=>{Store.Log(kind,new{message=message});if(kind=="first_run_setup_failed")MessageBox.Show("未能启用开机后台运行，可在设置中重试。\n"+message,"雷神自动暂停助手",MessageBoxButtons.OK,MessageBoxIcon.Warning);})){QuitSignal.Dispose();ShowSignal.Dispose();RestoreSignal.Dispose();mutex.ReleaseMutex();return;}
-    Store.Log("monitor_initializing",new{admin=Store.IsAdmin,background=args.Contains("--background")});
-    try{using(QuitSignal)using(ShowSignal)using(RestoreSignal)Application.Run(new GuardForm(settings,args.Contains("--background")));}finally{mutex.ReleaseMutex();}
+    if(FirstRunSetup.Run(settings,args.Contains("--first-run-setup"),Store.IsAdmin,args.Contains("--background"),s=>Store.Write(Store.Config,s),arguments=>{using(var child=Store.Elevate(arguments,true)){return child!=null;}},()=>Startup.Install(false),(kind,message)=>{Store.Log(kind,new{message=message});if(kind=="first_run_setup_failed")MessageBox.Show("未能启用开机后台运行，可在设置中重试。\n"+message,"雷神自动暂停助手",MessageBoxButtons.OK,MessageBoxIcon.Warning);})){QuitSignal.Dispose();ShowSignal.Dispose();RestoreSignal.Dispose();mutex.ReleaseMutex();return;}
+    Store.Log("monitor_initializing",new{admin=Store.IsAdmin,background=background});
+    try{using(QuitSignal)using(ShowSignal)using(RestoreSignal)Application.Run(new GuardForm(settings,background));}finally{mutex.ReleaseMutex();}
    }
   }catch(Exception e){try{Store.Log("program_error",new{error=e.Message,trace=e.ToString()});}catch{}MessageBox.Show(e.Message,"雷神自动暂停助手",MessageBoxButtons.OK,MessageBoxIcon.Warning);}
  }
 }
 }
+
+
+
+
+
+
+
+
+

@@ -8,12 +8,13 @@ using System.Windows.Forms;
 using LeigodGuard;
 class OffscreenGuardForm:GuardForm {
  public System.Collections.Generic.HashSet<string> ProcessOverride;
- public int PromptCount;
+ public int PromptCount; public int TrayNoticeCount;
  public OffscreenGuardForm(Settings settings):base(settings,true){StartPosition=FormStartPosition.Manual;Location=new Point(-10000,-10000);ShowInTaskbar=false;}
  protected override bool ShowWithoutActivation {get{return true;}}
  protected override void OnShown(EventArgs e){}
  protected override System.Collections.Generic.HashSet<string> ReadProcessNames(){return ProcessOverride??base.ReadProcessNames();}
  protected override void OpenPrompt(){PromptCount++;}
+ protected override void ShowTrayNotice(){TrayNoticeCount++;}
 }
 class UiSettingsTests {
  static int count;
@@ -42,6 +43,7 @@ class UiSettingsTests {
   grid.ClearSelection();typeof(GuardForm).GetMethod("DeleteSelectedGames",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(form,null);Check(grid.Rows.Count==1,"deleting with no selection is harmless");
   form.Show();form.PerformLayout();Application.DoEvents();
   using(var confirmation=new OffscreenConfirmForm()){confirmation.Show();Application.DoEvents();var layout=confirmation.Controls.OfType<TableLayoutPanel>().Single();var actions=layout.Controls.OfType<TableLayoutPanel>().Single();var buttons=actions.Controls.OfType<Button>().OrderBy(b=>b.Left).ToArray();Check(buttons.Length==2&&Math.Abs(buttons[0].Width-buttons[1].Width)<=1&&buttons[0].Right<buttons[1].Left&&Math.Abs(actions.Left-(confirmation.ClientSize.Width-actions.Right))<=1,"confirmation buttons have equal width, centered group and clear spacing at current DPI");Check(confirmation.AcceptButton==null&&confirmation.CancelButton==buttons[1]&&confirmation.ActiveControl==buttons[1]&&!confirmation.Approved,"confirmation has no default approval and initially focuses Continue");using(var bitmap=new Bitmap(confirmation.Width,confirmation.Height)){confirmation.DrawToBitmap(bitmap,new Rectangle(0,0,bitmap.Width,bitmap.Height));bitmap.Save(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"confirmation-layout.png"));}confirmation.Close();}
+  var footer=((Label)Field(form,"bindingHelp")).Parent;var uninstallButton=footer.Controls.OfType<Button>().Single(b=>b.Text=="卸载");Check(uninstallButton.Visible&&uninstallButton.Right==footer.ClientSize.Width&&uninstallButton.Width<150,"small uninstall button is visible at bottom right without a large primary action");
   var dialog=(ProductSettingsDialog)Field(form,"settingsDialog");dialog.PerformLayout();Check(dialog.Controls.OfType<Label>().Where(l=>l.Text=="退出等待").All(l=>!l.Bounds.IntersectsWith(numeric.Bounds)),"waiting-time label and numeric field do not overlap");
   Check(!form.Controls.OfType<TabControl>().Any()&&grid.Columns.Count==3&&!grid.Columns.Cast<DataGridViewColumn>().Any(c=>c.HeaderText.Contains("进程")||c.HeaderText.Contains("添加方式")),"main screen only shows monitor toggle, game and state without configuration tabs or addition source");
   Check(!grid.Rows[0].Cells[0].ReadOnly&&grid.Rows[0].Cells[1].ReadOnly,"monitor checkbox remains editable while game information is read-only");
@@ -54,6 +56,7 @@ class UiSettingsTests {
   Check(SteamLibraryPicker.DefaultBrowseDirectory(null,new[]{libraryRoot})==Path.Combine(libraryRoot,"steamapps","common"),"manual add defaults to Steam common directory without a selected game");
   Check(SteamLibraryPicker.DefaultBrowseDirectory(Path.Combine(dir,"missing"),new[]{libraryRoot})==Path.Combine(libraryRoot,"steamapps","common")&&SteamLibraryPicker.DefaultBrowseDirectory(gameFolder,new[]{libraryRoot})==gameFolder,"manual add skips missing directory and prefers the selected installed game");
   var commit=typeof(GuardForm).GetMethod("AddSelectedGame",BindingFlags.Instance|BindingFlags.NonPublic);cfg.IgnoredGames=new[]{steamGame.DiscoveryKey,steamGame.Name};commit.Invoke(form,new object[]{steamGame,null,steamGame.Name,new[]{libraryRoot}});commit.Invoke(form,new object[]{steamGame,null,steamGame.Name,new[]{libraryRoot}});Check(cfg.Games.Count(g=>g.SteamAppId=="777")==1&&!cfg.IgnoredGames.Contains(steamGame.DiscoveryKey)&&cfg.SteamLibraries.Contains(libraryRoot),"explicit library add restores removed game, persists custom library and avoids duplicates");
+  var closeToTray=typeof(GuardForm).GetMethod("CloseToTray",BindingFlags.Instance|BindingFlags.NonPublic);closeToTray.Invoke(form,new object[]{false});Check(form.TrayNoticeCount==0&&!cfg.TrayNoticeShown,"automatic background hiding does not consume close-button explanation");form.Show();form.Close();Check(!form.Visible&&!form.IsDisposed&&form.TrayNoticeCount==1&&cfg.TrayNoticeShown&&Store.Load().TrayNoticeShown,"first X click explains tray behavior, saves notice and keeps monitor alive");form.Show();form.Close();Check(form.TrayNoticeCount==1&&!form.Visible,"later X click hides to tray without repeating explanation");
   var lateCfg=new TestSettings{ExitDelaySeconds=0};lateCfg.Games[0].Processes=new[]{"guard-fake-game.exe"};var late=new OffscreenGuardForm(lateCfg);((System.Windows.Forms.Timer)Field(late,"timer")).Stop();var lateState=(MonitorState)Field(late,"machine");
   late.ProcessOverride=new System.Collections.Generic.HashSet<string>(new[]{"leigod.exe"},StringComparer.OrdinalIgnoreCase);
   lateState.TrackProcesses(new System.Collections.Generic.HashSet<string>(new[]{"guard-fake-game.exe"},StringComparer.OrdinalIgnoreCase),0,lateCfg);
@@ -63,7 +66,7 @@ class UiSettingsTests {
   late.PromptCount=0;typeof(GuardForm).GetField("actionBusy",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(late,true);poll.Invoke(late,null);Check(late.PromptCount==0&&lateState.NeedsPrompt,"busy UI preserves pending reminder without showing it early");
   typeof(GuardForm).GetField("actionBusy",BindingFlags.Instance|BindingFlags.NonPublic).SetValue(late,false);poll.Invoke(late,null);Check(late.PromptCount==1,"UI shows queued reminder once idle even after edge-trigger tick was missed");
   typeof(GuardForm).GetMethod("ExitGuard",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(late,null);late.Dispose();
-  typeof(GuardForm).GetMethod("ExitGuard",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(form,null);form.Dispose();Program.QuitSignal.Dispose();Program.ShowSignal.Dispose();
+  typeof(GuardForm).GetMethod("ExitGuard",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(form,null);form.Dispose();using(var firstDisplay=new OffscreenFirstDisplayForm(new Settings{AutoDiscover=false})){((System.Windows.Forms.Timer)Field(firstDisplay,"timer")).Stop();firstDisplay.Show();Application.DoEvents();Check(firstDisplay.Visible&&firstDisplay.WindowState==FormWindowState.Normal&&firstDisplay.ShowInTaskbar,"actual first main window stays visible with a taskbar entry");Check(Store.Load().MainWindowShown,"actual Shown event persists that the first window was presented");typeof(GuardForm).GetMethod("ExitGuard",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(firstDisplay,null);}Program.QuitSignal.Dispose();Program.ShowSignal.Dispose();
   Console.WriteLine("UI TOTAL: "+count+" passed");
  }
 }
@@ -80,3 +83,10 @@ class OffscreenConfirmForm:ConfirmForm {
  public OffscreenConfirmForm():base("测试游戏",false,0){Location=new Point(-10000,-10000);StartPosition=FormStartPosition.Manual;ShowInTaskbar=false;TopMost=false;}
  protected override bool ShowWithoutActivation{get{return true;}}
 }
+
+class OffscreenFirstDisplayForm:GuardForm {
+ public OffscreenFirstDisplayForm(Settings cfg):base(cfg,false){Location=new Point(-10000,-10000);StartPosition=FormStartPosition.Manual;}
+ protected override bool ShowWithoutActivation{get{return true;}}
+ protected override void ShowTrayNotice(){}
+}
+

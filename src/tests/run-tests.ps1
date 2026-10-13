@@ -47,3 +47,9 @@ $setupExe = Join-Path $OutDir 'FirstRunSetupTests.exe'
 if ($LASTEXITCODE -ne 0) { throw '首次运行测试编译失败' }
 & $setupExe
 if ($LASTEXITCODE -ne 0) { throw '首次运行测试失败' }
+
+$uninstallExe = Join-Path $OutDir 'UninstallTests.exe'
+& $compilerPath /nologo /codepage:65001 /platform:x64 /target:exe /main:UninstallTests ('/out:' + $uninstallExe) '/r:Microsoft.CSharp.dll' @referenceArgs @allSources (Join-Path $PSScriptRoot 'UninstallTests.cs')
+if ($LASTEXITCODE -ne 0) { throw '卸载测试编译失败' }
+& $uninstallExe
+if ($LASTEXITCODE -ne 0) { throw '卸载测试失败' }

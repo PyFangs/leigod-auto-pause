@@ -22,7 +22,9 @@ class FirstRunSetupTests {
   FirstRunSetup.Run(adminSettings,false,true,false,save,elevate,install,report);
   Check(installs==2&&elevations==1&&adminSettings.FirstRunSetupCompleted,"already elevated first launch enables startup without a permission prompt");
   var backgroundSettings=new Settings();FirstRunSetup.Run(backgroundSettings,false,false,true,save,elevate,install,report);
-  Check(argument.EndsWith(" --background"),"initial setup preserves background launch mode");
+  Check(argument=="--takeover --first-run-setup","initial setup always requests a visible elevated continuation even when launched by startup");
+  var initial=new Settings();Check(!FirstRunSetup.StartInBackground(initial,true,false),"fresh launch ignores background flag until main window has been shown");initial.FirstRunSetupCompleted=true;Check(!FirstRunSetup.StartInBackground(initial,true,false),"completing permission setup alone never hides first main window");initial.MainWindowShown=true;Check(FirstRunSetup.StartInBackground(initial,true,false),"later scheduled launch remains in background");Check(!FirstRunSetup.StartInBackground(initial,false,false),"manual launch opens main window after onboarding");Check(!FirstRunSetup.StartInBackground(initial,true,true),"elevated first-run continuation remains visible despite a background argument");
+  var visibleStart=Store.ElevationStartInfo("--takeover --first-run-setup",true);Check(visibleStart.WindowStyle==System.Diagnostics.ProcessWindowStyle.Normal&&visibleStart.UseShellExecute&&visibleStart.Verb=="runas","first-run elevation starts a normal window through standard Windows permission flow");Check(Store.ElevationStartInfo("--pause-once test").WindowStyle==System.Diagnostics.ProcessWindowStyle.Hidden,"one-shot helper does not open a redundant main window");
   var cancelled=new Settings();int declined=0;
   Check(!FirstRunSetup.Run(cancelled,false,false,false,save,a=>{declined++;throw new Win32Exception(1223);},install,report)&&kind=="first_run_permission_declined"&&cancelled.FirstRunSetupCompleted,"Windows permission cancellation keeps application open and records the decline");
   FirstRunSetup.Run(cancelled,false,false,false,save,a=>{declined++;return true;},install,report);
@@ -39,3 +41,4 @@ class FirstRunSetupTests {
   Console.WriteLine("FIRST RUN TOTAL: "+count+" passed");
  }
 }
+

@@ -32,6 +32,8 @@ public class Settings {
  public string[] IgnoredGames {get;set;}
  public string[] SteamLibraries {get;set;}
  public bool FirstRunSetupCompleted {get;set;}
+ public bool MainWindowShown {get;set;}
+ public bool TrayNoticeShown {get;set;}
  public Settings() {
   ExitDelaySeconds=5;ClientPath=@"C:\Program Files (x86)\LeiGod_Acc\leigod_launcher.exe";
   AutoDiscover=true;IgnoredGames=new string[0];SteamLibraries=new string[0];Games=new List<GameBinding>();
@@ -161,3 +163,4 @@ public static class ReminderText {
  }
 }
 }
+

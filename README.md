@@ -2,7 +2,7 @@
 
 游戏退出后提醒你暂停雷神计费时长。**只有你点击“暂停时长”才会执行暂停**；关闭提醒、选择继续加速或游戏重启，都不会自动扣停。
 
-[下载 Windows 64 位版](https://github.com/PyFangs/leigod-auto-pause/releases/latest) · [直接下载 v2.3.0](https://raw.githubusercontent.com/PyFangs/leigod-auto-pause/main/dist/leigod-auto-pause-v2.3.0-win-x64.zip) · [详细使用说明](docs/usage.md) · [实现与数据说明](docs/architecture.md) · [测试记录](docs/testing.md)
+[下载 Windows 64 位版](https://github.com/PyFangs/leigod-auto-pause/releases/latest) · [直接下载 v2.4.0](https://raw.githubusercontent.com/PyFangs/leigod-auto-pause/main/dist/leigod-auto-pause-v2.4.0-win-x64.zip) · [详细使用说明](docs/usage.md) · [实现与数据说明](docs/architecture.md) · [测试记录](docs/testing.md)
 
 ## 能做什么
 
@@ -10,8 +10,10 @@
 - 游戏运行过并退出后，等待 0–600 秒再询问是否暂停。
 - 游戏重启会取消提醒；Steam 或启动器留在后台不会单独阻止提醒。
 - 需要暂停时自动唤回托盘中的雷神；核对暂停结果，成功后不再额外弹窗。
-- 新用户首次运行会请求所需管理员权限并启用开机后台运行，后续可在设置中关闭。
+- 新用户首次运行会请求所需管理员权限并启用开机运行，主窗口保持可见；之后开机才在后台运行。
 - 没有预置 DOTA2 或其他游戏。特殊位置、非 Steam 游戏可通过“手动添加游戏”补充。
+
+- 第一次点击“×”会说明托盘行为；右下角提供小型“卸载”入口，确认后移除助手的启动项、程序及本地配置记录。
 
 ## 下载与安装
 
@@ -20,6 +22,8 @@
 3. 正常在雷神中加速并启动游戏，退出时按提醒选择即可。
 
 支持 **Windows 10/11 x64**，需要 Windows 简体中文文字识别组件。程序无需安装器，默认不开启任何需要输入账号的工具登录。取消权限确认后仍可打开程序，在设置中重试。
+
+![主窗口示例，使用测试数据](docs/images/main-window.png)
 
 ![退出确认窗口](docs/images/confirmation.png)
 
@@ -47,3 +51,4 @@ C# / .NET Framework / Windows Forms / Windows 本地 OCR，无额外 NuGet 依�
 ```
 
 完整界面测试会短暂显示独立模拟窗口，只启动临时测试进程并点击模拟按钮。后台环境可加 `-SkipClientClickTest`，跳过需要前台桌面的 OCR 点击测试。源码公开用于审阅，仓库尚未指定开源许可证。
+
