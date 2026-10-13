@@ -1,0 +1,1 @@
+# leigod-auto-pause
