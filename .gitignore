@@ -1,0 +1,8 @@
+build/
+work/
+*.exe
+运行状态.json
+恢复检查.json
+settings.json
+sessions.jsonl
+requests/
